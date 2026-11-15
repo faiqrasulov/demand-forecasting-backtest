@@ -126,8 +126,9 @@ the 4 weeks (672 hours) before the origin:
   quantile of how far calibration actuals fell outside them (a negative shift narrows bounds
   that are too wide).
 
-Conformal scores are computed on the log1p scale, so the correction is multiplicative. This
-was chosen before the backtest using 2011 data only: binned by forecast level, the 90th
+Conformal scores are computed on the log1p scale, so the correction is multiplicative. A
+diagnostic on 2011 data only, before the first origin, supports this: binned by forecast
+level, the 90th
 percentile of absolute seasonal-naive residuals varies by a factor of 20.8 across levels on the
 raw scale, 3.4 on the square-root scale and 1.9 on log1p (`scale_diagnostic_before_first_origin`
 in `metrics.json`).
@@ -142,12 +143,11 @@ finite-sample coverage `ceil((n+1)(1-a))/(n+1)` on i.i.d. data; CQR repairs quan
 are too narrow or too wide; timestamp rebuilding and gap filling; and a pipeline smoke test on a
 synthetic hourly series.
 
-**How the model set was settled.** The first full run had only the single lags ≥ 168 h
-boosting model. It lost to daily ETS, whose advantage is the most recent days' level, so the
-per-day direct variant was added. Both are reported. A level-normalised boosting variant
-(a Poisson exposure offset by the trailing weekly mean) was then tried on separate 2011
-validation origins and not adopted, because it gave no consistent gain. No hyperparameters
-were tuned on the 2012 origins.
+**The model set.** Two boosting models are reported: one with single lags ≥ 168 h, and a
+per-day direct variant that can use the most recent days' level, which is where daily ETS gets
+its advantage. The per-day variant was added after the first one lost to daily ETS on the 2012
+origins, so its comparison with ETS is not a clean out-of-sample test. Hyperparameters are
+fixed in the code and are not tuned by `make run`.
 
 ## Results
 
@@ -225,7 +225,9 @@ Width is the mean interval width in rentals per hour.
   system needs an event calendar (holiday *periods*, school breaks) or a planner override; adding
   one after seeing this week would have been tuning on the test set.
 - **Hurricane Sandy (origin 25 Oct, 22 rentals on 29 Oct).** A shutdown that no demand
-  or calendar feature can anticipate; it is kept in the evaluation rather than filtered out.
+  or calendar feature can anticipate. The week is kept in the backtest, but the hours the
+  source does not record during the shutdown are not scored (see Data handling), so the error
+  of every model in this week is understated.
 - **CQR at 80% averages 73.2%, not 80%.** See above. Adaptive conformal inference (Gibbs &
   Candès 2021) is the natural next step.
 
