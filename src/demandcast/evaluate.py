@@ -18,6 +18,10 @@ def _mean_std(values: list[float] | np.ndarray) -> dict[str, float]:
         "mean": float(v.mean()),
         "std": float(v.std(ddof=1)) if len(v) > 1 else 0.0,
         "median": float(np.median(v)),
+        "q25": float(np.quantile(v, 0.25)),
+        "q75": float(np.quantile(v, 0.75)),
+        "min": float(v.min()),
+        "max": float(v.max()),
     }
 
 
@@ -117,8 +121,6 @@ def interval_summary(result: BacktestResult) -> dict:
         key = f"{round(level * 100)}"
         out.setdefault(setting, {}).setdefault(method, {})[key] = {
             "coverage": _mean_std(covs),
-            "coverage_min": float(np.min(covs)),
-            "coverage_max": float(np.max(covs)),
             "pooled_coverage": coverage(g["y"], g["lo"], g["hi"], rec),
             "width": _mean_std(widths),
             "per_origin_coverage": [round(float(c), 6) for c in covs],

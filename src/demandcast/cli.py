@@ -44,6 +44,25 @@ def _median_origin(per_origin_wape: list[float], origins: list[pd.Timestamp]) ->
     return origins[int(order[(len(order) - 1) // 2])]
 
 
+NOTABLE_DAYS = {
+    "hurricane_sandy_2012_10_29": "2012-10-29",
+    "christmas_eve_2012_12_24": "2012-12-24",
+    "christmas_2012_12_25": "2012-12-25",
+    "2012_12_26": "2012-12-26",
+}
+
+
+def _daily_rentals(df: pd.DataFrame) -> dict:
+    """Daily totals the README refers to (only dates present in ``df``)."""
+    daily = df["count"].groupby(df.index.normalize()).sum()
+    out = {k: int(daily[pd.Timestamp(d)]) for k, d in NOTABLE_DAYS.items()
+           if pd.Timestamp(d) in daily.index}
+    window = daily.loc["2012-12-10":"2012-12-21"]
+    if len(window):
+        out["mean_2012_12_10_to_21"] = round(float(window.mean()), 1)
+    return out
+
+
 def build_metrics(df: pd.DataFrame, result, config: BacktestConfig) -> dict:
     """Assemble everything the README reports into one JSON-serialisable dict."""
     splits = list(make_splitter(config).split(df.index))
@@ -63,6 +82,7 @@ def build_metrics(df: pd.DataFrame, result, config: BacktestConfig) -> dict:
                 str(y): round(float(df.loc[years == y, "count"].mean()), 2)
                 for y in sorted(set(years))
             },
+            "daily_rentals": _daily_rentals(df),
         },
         "design": {
             "origins": [f"{o:%Y-%m-%d %H:%M}" for o in origins],

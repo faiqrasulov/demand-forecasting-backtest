@@ -38,6 +38,7 @@ STYLE = {
     "axes.spines.top": False,
     "axes.spines.right": False,
     "axes.grid": True,
+    "axes.axisbelow": True,
     "grid.color": GRID,
     "grid.linewidth": 0.7,
     "xtick.color": MUTED,
@@ -55,13 +56,21 @@ LABELS = {
     "seasonal_naive_4w": "Seasonal naive\n(4-week mean)",
     "daily_ets": "Daily ETS +\nhourly profile",
     "ridge_calendar": "Ridge\n(calendar)",
-    "gbm_lag168": "GBM, one model\n(lags >= 1 week)",
-    "gbm_direct": "GBM, direct\n(one model per day)",
+    "gbm_lag168": "GBM, one model\n(lags \u2265 168 h)",
+    "gbm_direct": "GBM, direct\n(one model per forecast day)",
 }
 METHOD_LABELS = {
     "seasonal_naive_conformal": "Seasonal naive\n+ split conformal",
     "gbm_quantile": "GBM quantile\n(uncalibrated)",
     "gbm_cqr": "GBM quantile\n+ conformal (CQR)",
+}
+SHORT_LABELS = {
+    "seasonal_naive": "Naive\nlast week",
+    "seasonal_naive_4w": "Naive\n4-week mean",
+    "daily_ets": "Daily ETS\n+ profile",
+    "ridge_calendar": "Ridge\ncalendar",
+    "gbm_lag168": "GBM\nlags \u2265 168 h",
+    "gbm_direct": "GBM direct\nper day",
 }
 MODEL_COLORS = {
     "gbm_direct": BLUE,
@@ -111,7 +120,7 @@ def fig_backtest_origins(df: pd.DataFrame, splits: list[Split], path: Path) -> N
         ]
         ax.legend(handles, ["training (expanding)", "calibration (last 4 weeks, for intervals)",
                             "test: the next 168 hours"],
-                  loc="lower left", ncol=1, fontsize=8.5)
+                  loc="upper center", bbox_to_anchor=(0.5, -0.09), ncol=3, fontsize=8.5)
         _save(fig, path)
 
 
@@ -151,48 +160,47 @@ def fig_forecast_week(result: BacktestResult, origin: pd.Timestamp, path: Path) 
 
 
 def fig_model_comparison(summary: dict, path: Path) -> None:
-    """MASE and WAPE per model (mean +/- std across origins), settings A and B."""
+    """MASE (mean +/- std) and WAPE (median, IQR) per model across origins, settings A and B."""
     models = [m for m in POINT_MODELS if m in summary["A"]]
     x = np.arange(len(models))
     w = 0.38
+    panels = (
+        ("mase", "MASE: mean +/- 1 std across origins",
+         lambda v: (v["mean"], v["mean"] - v["std"], v["mean"] + v["std"]), "{:.2f}"),
+        ("wape", "WAPE: median and interquartile range across origins",
+         lambda v: (v["median"], v["q25"], v["q75"]), "{:.0%}"),
+    )
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
-        for ax, metric, title in (
-            (axes[0], "mase", "MASE (lower is better; 1 = in-sample weekly naive)"),
-            (axes[1], "wape", "WAPE: total absolute error / total demand"),
-        ):
+        fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+        for ax, (metric, title, stat, fmt) in zip(axes, panels, strict=True):
             for k, m in enumerate(models):
                 a, b = summary["A"][m][metric], summary["B"][m][metric]
                 uses_weather = not np.isclose(a["mean"], b["mean"])
-                xa = x[k] - (w / 2 if uses_weather else 0)
-                ax.bar(xa, a["mean"], w, yerr=a["std"], color=BLUE, capsize=3,
-                       error_kw={"ecolor": INK2, "lw": 1})
-                ax.text(xa, a["mean"] + a["std"] + 0.01 * (1 if metric == "wape" else 3),
-                        f"{a['mean']:.2f}" if metric == "mase" else f"{a['mean']:.0%}",
-                        ha="center", va="bottom", fontsize=8.5, color=INK)
-                if uses_weather:
-                    ax.bar(x[k] + w / 2, b["mean"], w, yerr=b["std"], color=ORANGE, capsize=3,
-                           error_kw={"ecolor": INK2, "lw": 1})
-                    ax.text(x[k] + w / 2,
-                            b["mean"] + b["std"] + 0.01 * (1 if metric == "wape" else 3),
-                            f"{b['mean']:.2f}" if metric == "mase" else f"{b['mean']:.0%}",
-                            ha="center", va="bottom", fontsize=8.5, color=INK)
-            base = summary["A"]["seasonal_naive"][metric]["mean"]
+                bars = [(x[k] - w / 2, a, BLUE), (x[k] + w / 2, b, ORANGE)] if uses_weather \
+                    else [(x[k], a, BLUE)]
+                for pos, v, color in bars:
+                    mid, lo, hi = stat(v)
+                    ax.bar(pos, mid, w, color=color, lw=0)
+                    ax.errorbar(pos, mid, yerr=[[mid - lo], [hi - mid]], color=INK2, lw=1,
+                                capsize=3)
+                    ax.text(pos, hi * 1.02, fmt.format(mid), ha="center", va="bottom",
+                            fontsize=8.5, color=INK)
+            base = stat(summary["A"]["seasonal_naive"][metric])[0]
             ax.axhline(base, color=INK2, ls="--", lw=1)
-            ax.set_xticks(x, [LABELS[m] for m in models], fontsize=8.5)
+            ax.set_xticks(x, [SHORT_LABELS[m] for m in models], fontsize=8.5)
             ax.set_title(title, fontsize=10.5)
             ax.set_ylim(bottom=0)
             ax.grid(axis="x", visible=False)
             if metric == "wape":
-                ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+                ax.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
         handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in (BLUE, ORANGE)]
         handles.append(plt.Line2D([], [], color=INK2, ls="--", lw=1))
         fig.legend(handles, ["A: demand history + calendar (operational)",
                              "B: + observed weather of the forecast week (oracle upper bound)",
-                             "seasonal naive, setting A"],
-                   loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.04), fontsize=9)
+                             "seasonal naive (last week), setting A"],
+                   loc="upper center", ncol=3, bbox_to_anchor=(0.5, 1.05), fontsize=9)
         n = len(summary["A"][models[0]]["per_origin"]["mase"])
-        fig.text(0.5, -0.03, f"Bars: mean over {n} origins; whiskers: +/- 1 std across origins. "
+        fig.text(0.5, -0.04, f"{n} forecast origins in 2012, 168-hour horizon. Lower is better. "
                  "Naive and ETS models use no weather, so they have one bar.",
                  ha="center", color=INK2, fontsize=8.5)
         _save(fig, path)
@@ -238,7 +246,7 @@ def fig_intervals_and_horizon(intervals: dict, profiles: dict, path: Path) -> No
             ax2.plot(days, vals, marker="o", color=MODEL_COLORS[m], lw=1.8, ms=5,
                      label=LABELS[m].replace("\n", " "))
         ax2.set_xticks(days, [f"day {d}" for d in days])
-        ax2.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0))
+        ax2.yaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
         ax2.set_ylim(bottom=0)
         ax2.set_ylabel(f"WAPE (pooled over {len(covs)} origins)")
         ax2.set_title("Error by forecast day (setting A)", fontsize=10.5)
