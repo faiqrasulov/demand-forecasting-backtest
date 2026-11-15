@@ -1,7 +1,8 @@
 # Demand Forecasting Backtest (`demandcast`)
 
 Demand forecasting evaluated the way it is used: rolling-origin backtesting, honest baselines,
-leakage-safe features and calibrated prediction intervals, on real hourly bike-sharing demand.
+leakage-safe features and conformal prediction intervals whose coverage is measured, on real
+hourly bike-sharing demand.
 
 [![CI](https://github.com/faiqrasulov/demand-forecasting-backtest/actions/workflows/ci.yml/badge.svg)](https://github.com/faiqrasulov/demand-forecasting-backtest/actions/workflows/ci.yml)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -257,6 +258,14 @@ make install          # pip install -e ".[dev]"
 make run              # download data, 12-origin backtest, settings A and B -> reports/ (~2.5 min)
 make test             # 52 tests, under 10 s, no network
 ```
+
+`make install` takes the newest compatible packages. To reproduce the committed `reports/`, use
+`make install-locked` instead: it installs the versions pinned in
+[`requirements.lock`](requirements.lock) (Python 3.12). With them `make run` regenerates the naive and
+boosting results exactly and the ridge results to 13 digits. The daily-ETS numbers come out within
+0.15% of the committed ones, enough to flip a third decimal (MASE 1.014 instead of 1.015): the
+committed run used Anaconda's numpy/scipy build, whose linear-algebra library differs from the
+PyPI wheels (checked on macOS arm64).
 
 ```python
 from demandcast.data import load_bike_hourly
