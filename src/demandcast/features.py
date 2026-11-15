@@ -1,10 +1,10 @@
 """Leakage-safe features for hourly demand.
 
 Calendar features (hour, weekday, holiday, working day) are known in advance. Lag features
-are the only place where the target enters, and :func:`lag_features` refuses to build any lag
-shorter than ``min_lag`` (the forecast horizon plus any data latency). With ``min_lag = 168``
-one model is valid for every hour of a 7-day horizon (direct strategy), because every input
-is at least a week old even for the last forecast hour.
+are the only place where the target enters, and :func:`lag_features` never builds a lag
+shorter than ``min_lag``. A model that forecasts hours up to ``h`` steps after the last known
+hour must use ``min_lag >= h`` (direct strategy): ``min_lag = 168`` gives one model valid for
+the whole week; ``min_lag = 24 d`` gives a model for forecast day ``d`` only.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def calendar_features(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "hour": idx.hour.to_numpy(dtype=np.int64),
-            "dayofweek": idx.dayofweek.to_numpy(dtype=np.int64),
+            "dayofweek": idx.day_of_week.to_numpy(dtype=np.int64),
             "workingday": frame["workingday"].to_numpy(dtype=np.int64),
             "holiday": frame["holiday"].to_numpy(dtype=np.int64),
         },
@@ -43,18 +43,21 @@ def lag_features(y: pd.Series, min_lag: int, n_seasons: int = 4) -> pd.DataFrame
     """Lagged demand features that only look at least ``min_lag`` hours back.
 
     ``y`` must be on a regular hourly index. Columns:
-    ``lag_<k>`` for the seasonal lags k >= min_lag (same hour, 1-4 weeks back for min_lag=168),
-    ``lag_mean`` (mean of those), ``day_mean`` and ``week_mean`` (mean demand over the 24 h and
-    168 h windows that end exactly ``min_lag`` hours before the target hour).
+    ``lag_<k>`` for the two most recent same-hour daily lags >= min_lag and the ``n_seasons``
+    most recent same-hour weekly lags >= min_lag; ``lag_mean`` (mean of the weekly lags);
+    ``day_mean`` and ``week_mean`` (mean demand over the 24 h and 168 h windows that end
+    exactly ``min_lag`` hours before the target hour).
     """
     if min_lag < 1:
         raise ValueError("min_lag must be >= 1.")
-    lags = seasonal_lags(min_lag, WEEK, n_seasons)
-    if min(lags) < min_lag:  # defensive: seasonal_lags guarantees this
+    daily = DAY * math.ceil(min_lag / DAY)
+    weekly = seasonal_lags(min_lag, WEEK, n_seasons)
+    lags = sorted({daily, daily + DAY, *weekly})
+    if min(lags) < min_lag:  # defensive: guaranteed by construction
         raise ValueError(f"Lag {min(lags)} < min_lag {min_lag} would leak the horizon.")
     y = y.astype(np.float64)
     out = {f"lag_{k}": y.shift(k) for k in lags}
-    out["lag_mean"] = pd.concat(out.values(), axis=1).mean(axis=1, skipna=True)
+    out["lag_mean"] = pd.concat([out[f"lag_{k}"] for k in weekly], axis=1).mean(axis=1)
     base = y.shift(min_lag)
     out["day_mean"] = base.rolling(DAY, min_periods=1).mean()
     out["week_mean"] = base.rolling(WEEK, min_periods=DAY).mean()
@@ -84,12 +87,12 @@ def ridge_design(frame: pd.DataFrame, weather: bool) -> np.ndarray:
     idx = pd.DatetimeIndex(frame.index)
     hour = _periodic_basis(idx.hour.to_numpy(), 24.0, 13)
     working = frame["workingday"].to_numpy(dtype=np.float64)[:, None]
-    doy = 2 * np.pi * idx.dayofyear.to_numpy(dtype=np.float64) / 365.25
+    doy = 2 * np.pi * idx.day_of_year.to_numpy(dtype=np.float64) / 365.25
     years = (idx - pd.Timestamp("2011-01-01")) / pd.Timedelta(days=365.25)
     blocks = [
         hour * working,
         hour * (1.0 - working),
-        np.eye(7)[idx.dayofweek.to_numpy()],
+        np.eye(7)[idx.day_of_week.to_numpy()],
         frame["holiday"].to_numpy(dtype=np.float64)[:, None],
         np.column_stack([np.sin(doy), np.cos(doy), np.sin(2 * doy), np.cos(2 * doy)]),
         np.asarray(years, dtype=np.float64)[:, None],

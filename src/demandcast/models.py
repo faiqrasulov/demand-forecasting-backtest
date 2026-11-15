@@ -12,6 +12,7 @@ weather columns.
 
 from __future__ import annotations
 
+import math
 import warnings
 from abc import ABC, abstractmethod
 
@@ -189,7 +190,7 @@ class GradientBoosting(Forecaster):
     ) -> None:
         self.uses_weather = weather
         self.min_lag = min_lag
-        self.name = "gbm_poisson" if loss == "poisson" else f"gbm_{loss}_{quantile}"
+        self.name = "gbm_lag168" if loss == "poisson" else f"gbm_{loss}_{quantile}"
         params = {
             "loss": loss,
             "max_iter": max_iter,
@@ -222,3 +223,42 @@ class GradientBoosting(Forecaster):
     def predict(self, frame: pd.DataFrame, index: pd.DatetimeIndex) -> np.ndarray:
         X = self.features(frame).loc[index]
         return np.clip(self._model.predict(X), 0.0, None)
+
+
+class DirectGradientBoosting(Forecaster):
+    """Direct multi-horizon strategy: one Poisson GBM per forecast day.
+
+    The model for day ``d`` of the horizon only uses lags >= ``gap + 24 d``, which is exactly
+    the information available for every hour of that day (day 1 may use yesterday, day 7 may
+    not). Hours are routed to their day's model by their distance from the last training hour.
+    """
+
+    name = "gbm_direct"
+
+    def __init__(
+        self, weather: bool = False, horizon: int = WEEK, gap: int = 0, **gbm_kwargs
+    ) -> None:
+        self.uses_weather = weather
+        self.gap = gap
+        self.models = [
+            GradientBoosting(weather=weather, min_lag=gap + DAY * d, **gbm_kwargs)
+            for d in range(1, math.ceil(horizon / DAY) + 1)
+        ]
+
+    def fit(self, train: pd.DataFrame) -> DirectGradientBoosting:
+        self._last = train.index[-1]
+        for model in self.models:
+            model.fit(train)
+        return self
+
+    def predict(self, frame: pd.DataFrame, index: pd.DatetimeIndex) -> np.ndarray:
+        index = pd.DatetimeIndex(index)
+        ahead = np.asarray((index - self._last) / pd.Timedelta(hours=1)).astype(int)
+        day = np.ceil((ahead - self.gap) / DAY).astype(int)
+        if day.min() < 1 or day.max() > len(self.models):
+            raise ValueError("Requested hours lie outside the horizon the model was built for.")
+        out = np.empty(len(index))
+        for d in np.unique(day):
+            sel = day == d
+            out[sel] = self.models[d - 1].predict(frame, index[sel])
+        return out

@@ -52,7 +52,7 @@ def openml_timestamps(frame: pd.DataFrame) -> pd.DatetimeIndex:
     hour = frame["hour"].to_numpy(dtype=np.int64)
     steps = np.mod(np.diff(weekday), 7)
     day = np.concatenate([[0], np.cumsum(steps)])
-    first_weekday = (START.dayofweek + 1) % 7  # UCI convention: 0 = Sunday
+    first_weekday = (START.day_of_week + 1) % 7  # UCI convention: 0 = Sunday
     if weekday[0] != first_weekday:
         raise ValueError("First row is not 2011-01-01; cannot rebuild timestamps.")
     stamps = pd.DatetimeIndex(
@@ -63,7 +63,7 @@ def openml_timestamps(frame: pd.DataFrame) -> pd.DatetimeIndex:
         and stamps.is_unique
         and np.array_equal(stamps.year - START.year, frame["year"].to_numpy(dtype=np.int64))
         and np.array_equal(stamps.month, frame["month"].to_numpy(dtype=np.int64))
-        and np.array_equal((stamps.dayofweek + 1) % 7, weekday)
+        and np.array_equal((stamps.day_of_week + 1) % 7, weekday)
     )
     if not ok:
         raise ValueError("Rebuilt timestamps disagree with the year/month/weekday columns.")
